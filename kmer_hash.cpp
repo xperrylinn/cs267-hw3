@@ -21,10 +21,10 @@ int main(int argc, char** argv) {
 
     // TODO: Dear Students,
     // Please remove this if statement, when you start writing your parallel implementation.
-    if (upcxx::rank_n() > 1) {
-        throw std::runtime_error("Error: parallel implementation not started yet!"
-                                 " (remove this when you start working.)");
-    }
+    // if (upcxx::rank_n() > 1) {
+    //     throw std::runtime_error("Error: parallel implementation not started yet!"
+    //                              " (remove this when you start working.)");
+    // }
 
     if (argc < 2) {
         BUtil::print("usage: srun -N nodes -n ranks ./kmer_hash kmer_file [verbose|test [prefix]]\n");
@@ -55,6 +55,14 @@ int main(int argc, char** argv) {
 
     size_t n_kmers = line_count(kmer_fname);
 
+    // Define and init atomic domain
+    upcxx::atomic_domain<int> ad(
+        {
+            upcxx::atomic_op::load, 
+            upcxx::atomic_op::fetch_inc,
+        }
+    );
+
     // Load factor of 0.5
     size_t hash_table_size = n_kmers * (1.0 / 0.5);
     HashMap hashmap(hash_table_size);
@@ -75,7 +83,7 @@ int main(int argc, char** argv) {
     std::vector<kmer_pair> start_nodes;
 
     for (auto& kmer : kmers) {
-        bool success = hashmap.insert(kmer);
+        bool success = hashmap.insert(kmer, &ad);
         if (!success) {
             throw std::runtime_error("Error: HashMap is full!");
         }
@@ -84,6 +92,10 @@ int main(int argc, char** argv) {
             start_nodes.push_back(kmer);
         }
     }
+
+    //Wait for RMA writes to complete
+    hashmap.wait_for_insert_completions();
+
     auto end_insert = std::chrono::high_resolution_clock::now();
     upcxx::barrier();
 
@@ -101,7 +113,7 @@ int main(int argc, char** argv) {
         contig.push_back(start_kmer);
         while (contig.back().forwardExt() != 'F') {
             kmer_pair kmer;
-            bool success = hashmap.find(contig.back().next_kmer(), kmer);
+            bool success = hashmap.find(contig.back().next_kmer(), kmer, &ad);
             if (!success) {
                 throw std::runtime_error("Error: k-mer not found in hashmap.");
             }
