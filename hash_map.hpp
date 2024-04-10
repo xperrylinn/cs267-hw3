@@ -21,7 +21,7 @@ struct HashMap {
     // Most important functions: insert and retrieve
     // k-mers from the hash table.
     bool insert(const kmer_pair& kmer, upcxx::atomic_domain<int>* atomic_domain);
-    bool find(const pkmer_t& key_kmer, kmer_pair& val_kmer, upcxx::atomic_domain<int>* atomic_domain);
+    bool find(const pkmer_t& key_kmer, kmer_pair& val_kmer);
 
     // Helper functions
     uint64_t get_target_rank(uint64_t kmer_hash);
@@ -32,7 +32,7 @@ struct HashMap {
     kmer_pair read_slot(uint64_t slot, uint64_t target_rank);
 
     // Request a slot or check if it's already used.
-    bool request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain);
+    bool request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain, uint64_t &probe);
     bool slot_used(uint64_t slot, uint64_t target_rank);
 };
 
@@ -63,8 +63,9 @@ bool HashMap::insert(const kmer_pair& kmer, upcxx::atomic_domain<int>* atomic_do
 
     do {
         //Works assuming sizes across ranks are equal
-        uint64_t slot = (hash + probe++) % size();
-        success = request_slot(slot, target_rank, atomic_domain);
+        uint64_t slot = (hash + probe) % size();
+        //request_slot() increments probe appropriately
+        success = request_slot(slot, target_rank, atomic_domain, probe);
         if (success) {
             write_slot(slot, target_rank, kmer);
         }
@@ -72,7 +73,7 @@ bool HashMap::insert(const kmer_pair& kmer, upcxx::atomic_domain<int>* atomic_do
     return success;
 }
 
-bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer, upcxx::atomic_domain<int>* atomic_domain) {
+bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer) {
     uint64_t hash = key_kmer.hash();
     uint64_t probe = 0;
     bool success = false;
@@ -126,24 +127,16 @@ kmer_pair HashMap::read_slot(uint64_t slot, uint64_t target_rank) {
     }
 }
 
-// bool HashMap::request_slot(uint64_t slot) {
-//     if (used[slot] != 0) {
-//         return false;
-//     } else {
-//         used[slot] = 1;
-//         return true;
-//     }
-// }
-
-//Requests slot. TODO: To speed up, we can increment probe by value at used[slot]
-bool HashMap::request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain) {
+//Requests slot. To speed up, we can increment probe by value at used[slot]
+bool HashMap::request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain, uint64_t &probe) {
     
     upcxx::global_ptr<int> target_used_ptr = g_used_ptr.fetch(target_rank).wait();
     uint64_t slot_val = atomic_domain->fetch_inc(target_used_ptr + slot, std::memory_order_acq_rel).wait();
     //TODO: should we downcast when available here? I think not, to maintain atomicity via ad
     
     if (slot_val > 0){
-        //can increment probe here, if passed in
+        //can increment probe here
+        probe += slot_val;
         return false;
     } else {
         return true;
