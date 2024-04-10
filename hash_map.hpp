@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kmer_t.hpp"
+#include "cmath"
 #include <upcxx/upcxx.hpp>
 
 struct HashMap {
@@ -12,6 +13,8 @@ struct HashMap {
     upcxx::promise<> insert_prom;
 
     size_t my_size;
+    //used to avoid hash collision
+    uint64_t hash_offset;
 
     size_t size() const noexcept;
     // int size() const noexcept;
@@ -42,10 +45,12 @@ HashMap::HashMap(size_t size) {
     g_my_size_ptr = upcxx::new_<int>(size);
 
     my_size = size;
+    hash_offset = ((uint64_t) log2(upcxx::rank_n())) + 1;
 }
 
+// We ignore the hash bits used to determine slot placement, in hopes of avoiding collision
 uint64_t HashMap::get_target_rank(uint64_t kmer_hash) {
-    return kmer_hash % upcxx::rank_n();
+    return (kmer_hash>>hash_offset) % upcxx::rank_n();
 }
 
 // Waits on all outgoing RMA writes. Need to call this before reading stage
