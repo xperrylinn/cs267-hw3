@@ -84,6 +84,12 @@ int main(int argc, char** argv) {
 
     for (auto& kmer : kmers) {
         bool success = hashmap.insert(kmer, &ad);
+        if (std::strcmp(kmer.kmer.get().c_str(), "AGCCAGTGCCTGATACTGG") == 0) {
+            std::cout << "\nInserting kmer: " << "AGCCAGTGCCTGATACTGG";
+            std::cout << " by rank: " << upcxx::rank_me();
+            std::cout << "\nHash of kmer: " << kmer.kmer.hash();
+            std::cout << "\n\n" << std::flush;
+        }
         if (!success) {
             throw std::runtime_error("Error: HashMap is full!");
         }
@@ -115,6 +121,12 @@ int main(int argc, char** argv) {
             kmer_pair kmer;
             bool success = hashmap.find(contig.back().next_kmer(), kmer, &ad);
             if (!success) {
+                /* std::cout << "\nFailed to find kmer: " << contig.back().next_kmer().get() << "\n";
+                std::cout << "Rank trying to initiate find: " << upcxx::rank_me() << '\n';
+                std::cout << "Hash of kmer: " << contig.back().next_kmer().hash() << '\n';
+                std::cout << "\n" << std::flush; */
+                std::cout << "\nError at find. Contig size: " << contig.size() << "\n\n";
+                std::cout << std::flush;
                 throw std::runtime_error("Error: k-mer not found in hashmap.");
             }
             contig.push_back(kmer);
