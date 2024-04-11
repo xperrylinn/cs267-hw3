@@ -36,7 +36,7 @@ struct HashMap {
     kmer_pair read_slot(uint64_t slot, uint64_t target_rank);
 
     // Request a slot or check if it's already used.
-    bool request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain, uint64_t &probe);
+    bool request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain);
     bool slot_used(uint64_t slot, uint64_t target_rank);
 };
 
@@ -45,8 +45,6 @@ HashMap::HashMap(size_t size) {
     g_used_ptr = upcxx::new_array<int>(size);
     g_my_size_ptr = upcxx::new_<int>(size);
     
-    std::cout << "Initializing Map, Current rank is: " << upcxx::rank_me() << '\n';
-
     my_size = size;
     hash_offset = ((uint64_t) log2(upcxx::rank_n())) + 1;
 }
@@ -71,9 +69,9 @@ bool HashMap::insert(const kmer_pair& kmer, upcxx::atomic_domain<int>* atomic_do
 
     do {
         //Works assuming sizes across ranks are equal
-        uint64_t slot = (hash + probe) % size();
+        uint64_t slot = (hash + probe++) % size();
         //request_slot() increments probe appropriately
-        success = request_slot(slot, target_rank, atomic_domain, probe);
+        success = request_slot(slot, target_rank, atomic_domain);
         if (success) {
             write_slot(slot, target_rank, kmer);
         }
@@ -97,13 +95,6 @@ bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer) {
             }
         }
     } while (!success && probe < size());
-    
-    if (!success) {
-        std::cout << "Unfound Kmer at end of find. Key_kmer: " << key_kmer.get() <<'\n';
-        std::cout << "Total rank is: " << upcxx::rank_n() << '\n';
-        std::cout << "Current rank is: " << upcxx::rank_me() << '\n';
-        std::cout << "Target rank is: " << target_rank << "\n\n";
-    }
     return success;
 }
 
@@ -114,6 +105,7 @@ bool HashMap::slot_used(uint64_t slot, uint64_t target_rank) {
     upcxx::global_ptr<int> target_used_ptr = g_used_ptr.fetch(target_rank).wait();
     if (target_used_ptr.is_local()) {
         // Downcast if this is local, saves times
+        //return upcxx::rget(target_used_ptr + slot).wait() != 0; 
         return target_used_ptr.local()[slot] != 0;
     }
     return upcxx::rget(target_used_ptr + slot).wait() != 0; 
@@ -123,11 +115,13 @@ bool HashMap::slot_used(uint64_t slot, uint64_t target_rank) {
 
 void HashMap::write_slot(uint64_t slot, uint64_t target_rank, const kmer_pair& kmer) { 
     upcxx::global_ptr<kmer_pair> target_data_ptr = g_data_ptr.fetch(target_rank).wait();
+
     if (target_data_ptr.is_local()) {
         target_data_ptr.local()[slot] = kmer;
+        //upcxx::rput(kmer, target_data_ptr + slot, upcxx::operation_cx::as_promise(insert_prom));
     } else {
         // The wait completing objects are stored as promise. Need to sync this before reading
-        upcxx::rput(&kmer, target_data_ptr + slot, std::memory_order_relaxed, upcxx::operation_cx::as_promise(insert_prom));
+        upcxx::rput(kmer, target_data_ptr + slot, upcxx::operation_cx::as_promise(insert_prom));
     }
 }
 
@@ -136,14 +130,16 @@ void HashMap::write_slot(uint64_t slot, uint64_t target_rank, const kmer_pair& k
 kmer_pair HashMap::read_slot(uint64_t slot, uint64_t target_rank) {
     upcxx::global_ptr<kmer_pair> target_data_ptr = g_data_ptr.fetch(target_rank).wait();
     if (target_data_ptr.is_local()) {
+        //return upcxx::rget(target_data_ptr + slot).wait();
         return target_data_ptr.local()[slot];
     } else {
-        return upcxx::rget(target_data_ptr).wait();
-    }
+        return upcxx::rget(target_data_ptr + slot).wait();
+    } 
 }
 
-//Requests slot. To speed up, we can increment probe by value at used[slot]
-bool HashMap::request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain, uint64_t &probe) {
+
+//Requests slot. TODO: To speed up, we can increment probe by value at used[slot]
+bool HashMap::request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_domain<int>* atomic_domain) {
     
     upcxx::global_ptr<int> target_used_ptr = g_used_ptr.fetch(target_rank).wait();
     uint64_t slot_val = atomic_domain->fetch_inc(target_used_ptr + slot, std::memory_order_acq_rel).wait();
@@ -151,7 +147,6 @@ bool HashMap::request_slot(uint64_t slot, uint64_t target_rank, upcxx::atomic_do
     
     if (slot_val > 0){
         //can increment probe here
-        probe += slot_val;
         return false;
     } else {
         return true;
