@@ -2,6 +2,7 @@
 
 #include "kmer_t.hpp"
 #include "cmath"
+#include <string.h>
 #include <upcxx/upcxx.hpp>
 
 struct HashMap {
@@ -43,6 +44,8 @@ HashMap::HashMap(size_t size) {
     g_data_ptr = upcxx::new_array<kmer_pair>(size);
     g_used_ptr = upcxx::new_array<int>(size);
     g_my_size_ptr = upcxx::new_<int>(size);
+    
+    std::cout << "Initializing Map, Current rank is: " << upcxx::rank_me() << '\n';
 
     my_size = size;
     hash_offset = ((uint64_t) log2(upcxx::rank_n())) + 1;
@@ -94,6 +97,13 @@ bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer) {
             }
         }
     } while (!success && probe < size());
+    
+    if (!success) {
+        std::cout << "Unfound Kmer at end of find. Key_kmer: " << key_kmer.get() <<'\n';
+        std::cout << "Total rank is: " << upcxx::rank_n() << '\n';
+        std::cout << "Current rank is: " << upcxx::rank_me() << '\n';
+        std::cout << "Target rank is: " << target_rank << "\n\n";
+    }
     return success;
 }
 

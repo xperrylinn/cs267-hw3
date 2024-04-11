@@ -115,6 +115,9 @@ int main(int argc, char** argv) {
             kmer_pair kmer;
             bool success = hashmap.find(contig.back().next_kmer(), kmer);
             if (!success) {
+                std::cout << "Unfound kmer for Rank: " << upcxx::rank_n() << "\n";
+                std::cout << "Not found kmer: " << contig.back().next_kmer().get() << '\n';
+                std::cout << std::flush;
                 throw std::runtime_error("Error: k-mer not found in hashmap.");
             }
             contig.push_back(kmer);
