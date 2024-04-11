@@ -115,7 +115,8 @@ bool HashMap::slot_used(uint64_t slot, uint64_t target_rank) {
     upcxx::global_ptr<int> target_used_ptr = g_used_ptr.fetch(target_rank).wait();
     if (target_used_ptr.is_local()) {
         // Downcast if this is local, saves times
-        return target_used_ptr.local()[slot] != 0;
+        return upcxx::rget(target_used_ptr + slot).wait() != 0; 
+        //return target_used_ptr.local()[slot] != 0;
     }
     return upcxx::rget(target_used_ptr + slot).wait() != 0; 
 }
@@ -131,11 +132,12 @@ void HashMap::write_slot(uint64_t slot, uint64_t target_rank, const kmer_pair& k
         }    
     }
     if (target_data_ptr.is_local()) {
-        target_data_ptr.local()[slot] = kmer;
+        //target_data_ptr.local()[slot] = kmer;
+        upcxx::rput(kmer, target_data_ptr + slot, upcxx::operation_cx::as_promise(insert_prom));
     } else {
         // The wait completing objects are stored as promise. Need to sync this before reading
         std::cout << "Writing to slot using using rput!!\n"; //TODO: NEVER PRINTED FOR SINGLE NODE
-        upcxx::rput(&kmer, target_data_ptr + slot, std::memory_order_relaxed, upcxx::operation_cx::as_promise(insert_prom));
+        upcxx::rput(kmer, target_data_ptr + slot, upcxx::operation_cx::as_promise(insert_prom));
     }
 }
 
@@ -144,10 +146,11 @@ void HashMap::write_slot(uint64_t slot, uint64_t target_rank, const kmer_pair& k
 kmer_pair HashMap::read_slot(uint64_t slot, uint64_t target_rank) {
     upcxx::global_ptr<kmer_pair> target_data_ptr = g_data_ptr.fetch(target_rank).wait();
     if (target_data_ptr.is_local()) {
-        return target_data_ptr.local()[slot];
+        return upcxx::rget(target_data_ptr + slot).wait();
+        //return target_data_ptr.local()[slot];
     } else {
-        return upcxx::rget(target_data_ptr).wait();
-    }
+        return upcxx::rget(target_data_ptr + slot).wait();
+    } 
 }
 
 
